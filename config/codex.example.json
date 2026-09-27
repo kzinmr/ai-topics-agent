@@ -1,0 +1,5 @@
+{
+  "harness": "codex",
+  "adapters": {"codex": {"command": ["codex", "app-server"], "network_access": true}},
+  "delivery": {"operations": {"kind": "outbox"}, "digest": {"kind": "outbox"}, "hot-posts": {"kind": "outbox"}}
+}

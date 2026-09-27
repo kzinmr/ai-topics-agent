@@ -1,0 +1,27 @@
+#!/bin/sh
+# The only entry point for Hermes profile operations, on host or in Docker.
+set -eu
+agent_repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+profile=${1:?Usage: hermes-profile lucy [--exec command | hermes arguments]}
+shift
+case "$profile" in lucy) ;; *) echo 'Only Lucy is supported in this release' >&2; exit 2;; esac
+profile_root=${HERMES_PROFILE_ROOT:-$agent_repo/profiles/$profile}
+case "$profile_root" in /*) ;; *) profile_root="$PWD/$profile_root";; esac
+runtime=${HERMES_RUNTIME:-docker}
+if [ "$runtime" = docker ]; then
+    container_root=${HERMES_DOCKER_PROFILE_ROOT:-/opt/data}
+    if [ "${1:-}" = --exec ]; then shift; else set -- hermes "$@"; fi
+    docker_user=${HERMES_DOCKER_USER:-${AGENT_UID:-$(id -u)}:${AGENT_GID:-$(id -g)}}
+    case "$docker_user" in root|0|0:*) echo 'Set HERMES_DOCKER_USER to the non-root profile owner' >&2; exit 2;; esac
+    exec docker exec -u "$docker_user" -w "$container_root/ai-topics" \
+      -e HOME="$container_root" -e HERMES_PROFILE_ROOT="$container_root" \
+      -e HERMES_HOME="$container_root/.hermes" -e HERMES_SUBPROCESS_HOME="$container_root" \
+      "${HERMES_DOCKER_CONTAINER:-ai-topics-agent-lucy}" "$@"
+fi
+[ "$runtime" = host ] || { echo "unsupported runtime: $runtime" >&2; exit 2; }
+export HOME="$profile_root" HERMES_PROFILE_ROOT="$profile_root"
+export HERMES_HOME="$profile_root/.hermes" HERMES_SUBPROCESS_HOME="$profile_root"
+export PATH="$profile_root/.hermes/bin:$profile_root/bin:$PATH"
+cd "$profile_root/ai-topics"
+if [ "${1:-}" = --exec ]; then shift; exec "$@"; fi
+exec "${HERMES_HOST_BIN:-hermes}" "$@"

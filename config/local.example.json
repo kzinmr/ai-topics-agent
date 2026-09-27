@@ -1,0 +1,15 @@
+{
+  "harness": "hermes",
+  "max_catchup_minutes": 1440,
+  "environment": {},
+  "adapters": {
+    "hermes": {"executable": "hermes"},
+    "pi": {"command": ["pi", "--mode", "rpc", "--no-session"]},
+    "codex": {"command": ["codex", "app-server"], "network_access": true}
+  },
+  "delivery": {
+    "operations": {"kind": "outbox"},
+    "digest": {"kind": "outbox"},
+    "hot-posts": {"kind": "outbox"}
+  }
+}

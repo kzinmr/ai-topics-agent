@@ -1,0 +1,5 @@
+services:
+  lucy:
+    build:
+      dockerfile: deploy/Dockerfile.hermes
+    image: ai-topics-agent-hermes:local

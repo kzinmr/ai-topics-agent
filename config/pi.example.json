@@ -1,0 +1,5 @@
+{
+  "harness": "pi",
+  "adapters": {"pi": {"command": ["pi", "--mode", "rpc", "--no-session"]}},
+  "delivery": {"operations": {"kind": "outbox"}, "digest": {"kind": "outbox"}, "hot-posts": {"kind": "outbox"}}
+}

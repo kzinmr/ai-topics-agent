@@ -1,0 +1,18 @@
+services:
+  lucy:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ai-topics-agent:local
+    container_name: ai-topics-agent-lucy
+    user: "${AGENT_UID:-1000}:${AGENT_GID:-1000}"
+    init: true
+    environment:
+      HERMES_PROFILE_ROOT: /opt/data
+      HOME: /opt/data
+      HERMES_HOME: /opt/data/.hermes
+      HERMES_SUBPROCESS_HOME: /opt/data
+    volumes:
+      - ${LUCY_PROFILE_DIR:-../profiles/lucy}:/opt/data
+    restart: unless-stopped
+    stop_grace_period: 30s

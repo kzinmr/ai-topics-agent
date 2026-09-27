@@ -1,0 +1,703 @@
+---
+name: llm-wiki
+description: "Karpathy's LLM Wiki: build/query interlinked markdown KB."
+version: 2.1.0
+author: Hermes Agent
+license: MIT
+platforms: [linux, macos, windows]
+metadata:
+  hermes:
+    tags: [wiki, knowledge-base, research, notes, markdown, rag-alternative]
+    category: research
+    related_skills: [obsidian, arxiv]
+---
+
+# Karpathy's LLM Wiki
+
+Build and maintain a persistent, compounding knowledge base as interlinked markdown files.
+Based on [Andrej Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+
+Unlike traditional RAG (which rediscovers knowledge from scratch per query), the wiki
+compiles knowledge once and keeps it current. Cross-references are already there.
+Contradictions have already been flagged. Synthesis reflects everything ingested.
+
+**Division of labor:** The human curates sources and directs analysis. The agent
+summarizes, cross-references, files, and maintains consistency.
+
+## When This Skill Activates
+
+Use this skill when the user:
+- Asks to create, build, or start a wiki or knowledge base
+- Asks to ingest, add, or process a source into their wiki
+- Asks a question and an existing wiki is present at the configured path
+- Asks to lint, audit, or health-check their wiki
+- References their wiki, knowledge base, or "notes" in a research context
+
+## Wiki Location
+
+**Location:** Set via `WIKI_PATH` environment variable (e.g. in `~/.hermes/.env`).
+
+If unset, defaults to `~/wiki`.
+
+```bash
+WIKI="${WIKI_PATH:-$HOME/wiki}"
+```
+
+The wiki is just a directory of markdown files — open it in Obsidian, VS Code, or
+any editor. No database, no special tooling required.
+
+## Architecture: Three Layers
+
+```
+wiki/
+├── SCHEMA.md           # Conventions, structure rules, domain config
+├── index.md            # Sectioned content catalog with one-line summaries
+├── log.md              # Chronological action log (append-only, rotated yearly)
+├── raw/                # Layer 1: Immutable source material
+│   ├── articles/       # Web articles, clippings
+│   ├── papers/         # PDFs, arxiv papers
+│   ├── transcripts/    # Meeting notes, interviews
+│   └── assets/         # Images, diagrams referenced by sources
+├── entities/           # Layer 2: Entity pages (people, orgs, products, models)
+├── concepts/           # Layer 2: Concept/topic pages
+├── comparisons/        # Layer 2: Side-by-side analyses
+└── queries/            # Layer 2: Filed query results worth keeping
+```
+
+**Layer 1 — Raw Sources:** Immutable. The agent reads but never modifies these.
+**Layer 2 — The Wiki:** Agent-owned markdown files. Created, updated, and
+cross-referenced by the agent.
+**Layer 3 — The Schema:** `SCHEMA.md` defines structure, conventions, and tag taxonomy.
+
+## Resuming an Existing Wiki (CRITICAL — do this every session)
+
+When the user has an existing wiki, **always orient yourself before doing anything**:
+
+① **Read `SCHEMA.md`** — understand the domain, conventions, and tag taxonomy.
+② **Read `index.md`** — learn what pages exist and their summaries.
+③ **Scan recent `log.md`** — read the last 20-30 entries to understand recent activity.
+
+```bash
+WIKI="${WIKI_PATH:-$HOME/wiki}"
+# Orientation reads at session start
+read_file "$WIKI/SCHEMA.md"
+read_file "$WIKI/index.md"
+read_file "$WIKI/log.md" offset=<last 30 lines>
+```
+
+Only after orientation should you ingest, query, or lint. This prevents:
+- Creating duplicate pages for entities that already exist
+- Missing cross-references to existing content
+- Contradicting the schema's conventions
+- Repeating work already logged
+
+For large wikis (100+ pages), also run a quick `search_files` for the topic
+at hand before creating anything new.
+
+## Initializing a New Wiki
+
+When the user asks to create or start a wiki:
+
+1. Determine the wiki path (from `$WIKI_PATH` env var, or ask the user; default `~/wiki`)
+2. Create the directory structure above
+3. Ask the user what domain the wiki covers — be specific
+4. Write `SCHEMA.md` customized to the domain (see template below)
+5. Write initial `index.md` with sectioned header
+6. Write initial `log.md` with creation entry
+7. Confirm the wiki is ready and suggest first sources to ingest
+
+### SCHEMA.md Template
+
+Adapt to the user's domain. The schema constrains agent behavior and ensures consistency:
+
+```markdown
+# Wiki Schema
+
+## Domain
+[What this wiki covers — e.g., "AI/ML research", "personal health", "startup intelligence"]
+
+## Conventions
+- File names: lowercase, hyphens, no spaces (e.g., `transformer-architecture.md`)
+- Every wiki page starts with YAML frontmatter (see below)
+- Use `[[wikilinks]]` to link between pages (minimum 2 outbound links per page)
+- When updating a page, always bump the `updated` date
+- Every new page must be added to `index.md` under the correct section
+- Every action must be appended to `log.md`
+- **Provenance markers:** On pages that synthesize 3+ sources, append `^[raw/articles/source-file.md]`
+  at the end of paragraphs whose claims come from a specific source. This lets a reader trace each
+  claim back without re-reading the whole raw file. Optional on single-source pages where the
+  `sources:` frontmatter is enough.
+
+## Frontmatter
+  ```yaml
+  ---
+  title: Page Title
+  created: YYYY-MM-DD
+  updated: YYYY-MM-DD
+  type: entity | concept | comparison | query | summary
+  tags: [from taxonomy below]
+  sources: [raw/articles/source-name.md]
+  # Optional quality signals:
+  confidence: high | medium | low        # how well-supported the claims are
+  contested: true                        # set when the page has unresolved contradictions
+  contradictions: [other-page-slug]      # pages this one conflicts with
+  ---
+  ```
+
+`confidence` and `contested` are optional but recommended for opinion-heavy or fast-moving
+topics. Lint surfaces `contested: true` and `confidence: low` pages for review so weak claims
+don't silently harden into accepted wiki fact.
+
+### raw/ Frontmatter
+
+Raw sources ALSO get a small frontmatter block so re-ingests can detect drift:
+
+```yaml
+---
+source_url: https://example.com/article   # original URL, if applicable
+ingested: YYYY-MM-DD
+sha256: <hex digest of the raw content below the frontmatter>
+---
+```
+
+The `sha256:` lets a future re-ingest of the same URL skip processing when content is unchanged,
+and flag drift when it has changed. Compute over the body only (everything after the closing
+`---`), not the frontmatter itself.
+
+## Tag Taxonomy
+[Define 10-20 top-level tags for the domain. Add new tags here BEFORE using them.]
+
+Example for AI/ML:
+- Models: model, architecture, benchmark, training
+- People/Orgs: person, company, lab, open-source
+- Techniques: optimization, fine-tuning, inference, alignment, data
+- Meta: comparison, timeline, controversy, prediction
+
+Rule: every tag on a page must appear in this taxonomy. If a new tag is needed,
+add it here first, then use it. This prevents tag sprawl.
+
+## Page Thresholds
+- **Create a page** when an entity/concept appears in 2+ sources OR is central to one source
+- **Add to existing page** when a source mentions something already covered
+- **DON'T create a page** for passing mentions, minor details, or things outside the domain
+- **Split a page** when it exceeds ~200 lines — break into sub-topics with cross-links
+- **Archive a page** when its content is fully superseded — move to `_archive/`, remove from index
+
+## Entity Pages
+One page per notable entity. Include:
+- Overview / what it is
+- Key facts and dates
+- Relationships to other entities ([[wikilinks]])
+- Source references
+
+## Concept Pages
+One page per concept or topic. Include:
+- Definition / explanation
+- Current state of knowledge
+- Open questions or debates
+- Related concepts ([[wikilinks]])
+
+## Comparison Pages
+Side-by-side analyses. Include:
+- What is being compared and why
+- Dimensions of comparison (table format preferred)
+- Verdict or synthesis
+- Sources
+
+## Update Policy
+When new information conflicts with existing content:
+1. Check the dates — newer sources generally supersede older ones
+2. If genuinely contradictory, note both positions with dates and sources
+3. Mark the contradiction in frontmatter: `contradictions: [page-name]`
+4. Flag for user review in the lint report
+```
+
+### index.md Template
+
+The index is sectioned by type. Each entry is one line: wikilink + summary.
+
+```markdown
+# Wiki Index
+
+> Content catalog. Every wiki page listed under its type with a one-line summary.
+> Read this first to find relevant pages for any query.
+> Last updated: YYYY-MM-DD | Total pages: N
+
+## Entities
+<!-- Alphabetical within section -->
+
+## Concepts
+
+## Comparisons
+
+## Queries
+```
+
+**Scaling rule:** When any section exceeds 50 entries, split it into sub-sections
+by first letter or sub-domain. When the index exceeds 200 entries total, create
+a `_meta/topic-map.md` that groups pages by theme for faster navigation.
+
+### log.md Template
+
+```markdown
+# Wiki Log
+
+> Chronological record of all wiki actions. Append-only.
+> Format: `## [YYYY-MM-DD] action | subject`
+> Actions: ingest, update, query, lint, create, archive, delete
+> When this file exceeds 500 entries, rotate: rename to log-YYYY.md, start fresh.
+
+## [YYYY-MM-DD] create | Wiki initialized
+- Domain: [domain]
+- Structure created with SCHEMA.md, index.md, log.md
+```
+
+## Core Operations
+
+### 1. Ingest
+
+When the user provides a source (URL, file, paste), integrate it into the wiki:
+
+① **Capture the raw source:**
+   - URL → use `web_extract` to get markdown, save to `raw/articles/`
+   - PDF → use `web_extract` (handles PDFs), save to `raw/papers/`
+   - Pasted text → save to appropriate `raw/` subdirectory
+   - Name the file descriptively: `raw/articles/karpathy-llm-wiki-2026.md`
+   - **Add raw frontmatter** (`source_url`, `ingested`, `sha256` of the body).
+     On re-ingest of the same URL: recompute the sha256, compare to the stored value —
+     skip if identical, flag drift and update if different. This is cheap enough to
+     do on every re-ingest and catches silent source changes.
+
+② **Discuss takeaways** with the user — what's interesting, what matters for
+   the domain. (Skip this in automated/cron contexts — proceed directly.)
+
+③ **Check what already exists** — search index.md and use `search_files` to find
+   existing pages for mentioned entities/concepts. This is the difference between
+   a growing wiki and a pile of duplicates.
+
+④ **Write or update wiki pages:**
+   - **New entities/concepts:** Create pages only if they meet the Page Thresholds
+     in SCHEMA.md (2+ source mentions, or central to one source)
+   - **Existing pages:** Add new information, update facts, bump `updated` date.
+     When new info contradicts existing content, follow the Update Policy.
+   - **Cross-reference:** Every new or updated page must link to at least 2 other
+     pages via `[[wikilinks]]`. Check that existing pages link back.
+   - **Tags:** Only use tags from the taxonomy in SCHEMA.md
+   - **Provenance:** On pages synthesizing 3+ sources, append `^[raw/articles/source.md]`
+     markers to paragraphs whose claims trace to a specific source.
+   - **Confidence:** For opinion-heavy, fast-moving, or single-source claims, set
+     `confidence: medium` or `low` in frontmatter. Don't mark `high` unless the
+     claim is well-supported across multiple sources.
+
+⑤ **Update navigation:**
+   - Add new pages to `index.md` under the correct section, alphabetically
+   - Update the "Total pages" count and "Last updated" date in index header
+   - Append to `log.md`: `## [YYYY-MM-DD] ingest | Source Title`
+   - List every file created or updated in the log entry
+
+⑥ **Report what changed** — list every file created or updated to the user.
+
+A single source can trigger updates across 5-15 wiki pages. This is normal
+and desired — it's the compounding effect.
+
+### 2. Query
+
+When the user asks a question about the wiki's domain:
+
+① **Read `index.md`** to identify relevant pages.
+② **For wikis with 100+ pages**, also `search_files` across all `.md` files
+   for key terms — the index alone may miss relevant content.
+③ **Read the relevant pages** using `read_file`.
+④ **Synthesize an answer** from the compiled knowledge. Cite the wiki pages
+   you drew from: "Based on [[page-a]] and [[page-b]]..."
+⑤ **File valuable answers back** — if the answer is a substantial comparison,
+   deep dive, or novel synthesis, create a page in `queries/` or `comparisons/`.
+   Don't file trivial lookups — only answers that would be painful to re-derive.
+⑥ **Update log.md** with the query and whether it was filed.
+
+### 3. Lint
+
+When the user asks to lint, health-check, or audit the wiki:
+
+① **Orphan pages:** Find pages with no inbound `[[wikilinks]]` from other pages.
+```python
+# Use execute_code for this — programmatic scan across all wiki pages
+import os, re
+from collections import defaultdict
+wiki = "<WIKI_PATH>"
+# Scan all .md files in entities/, concepts/, comparisons/, queries/
+# Extract all [[wikilinks]] — build inbound link map
+# Pages with zero inbound links are orphans
+```
+
+② **Broken wikilinks:** Find `[[links]]` that point to pages that don't exist.
+
+③ **Index completeness:** Every wiki page should appear in `index.md`. Compare
+   the filesystem against index entries.
+
+④ **Frontmatter validation:** Every wiki page must have all required fields
+   (title, created, updated, type, tags, sources). Tags must be in the taxonomy.
+
+⑤ **Stale content:** Pages whose `updated` date is >90 days older than the most
+   recent source that mentions the same entities.
+
+⑥ **Contradictions:** Pages on the same topic with conflicting claims. Look for
+   pages that share tags/entities but state different facts. Surface all pages
+   with `contested: true` or `contradictions:` frontmatter for user review.
+
+⑦ **Quality signals:** List pages with `confidence: low` and any page that cites
+   only a single source but has no confidence field set — these are candidates
+   for either finding corroboration or demoting to `confidence: medium`.
+
+⑧ **Source drift:** For each file in `raw/` with a `sha256:` frontmatter, recompute
+   the hash and flag mismatches. Mismatches indicate the raw file was edited
+   (shouldn't happen — raw/ is immutable) or ingested from a URL that has since
+   changed. Not a hard error, but worth reporting.
+
+⑨ **Page size:** Flag pages over 200 lines — candidates for splitting.
+
+⑩ **Tag audit:** List all tags in use, flag any not in the SCHEMA.md taxonomy.
+
+⑪ **Log rotation:** If log.md exceeds 500 entries, rotate it.
+
+⑫ **Report findings** with specific file paths and suggested actions, grouped by
+   severity (broken links > orphans > source drift > contested pages > stale content > style issues).
+
+⑬ **Append to log.md:** `## [YYYY-MM-DD] lint | N issues found`
+
+## Working with the Wiki
+
+### Searching
+
+```bash
+# Find pages by content
+search_files "transformer" path="$WIKI" file_glob="*.md"
+
+# Find pages by filename
+search_files "*.md" target="files" path="$WIKI"
+
+# Find pages by tag
+search_files "tags:.*alignment" path="$WIKI" file_glob="*.md"
+
+# Recent activity
+read_file "$WIKI/log.md" offset=<last 20 lines>
+```
+
+### Bulk Ingest
+
+When ingesting multiple sources at once, batch the updates:
+1. Read all sources first
+2. Identify all entities and concepts across all sources
+3. Check existing pages for all of them (one search pass, not N)
+4. Create/update pages in one pass (avoids redundant updates)
+5. Update index.md once at the end
+6. Write a single log entry covering the batch
+
+### Archiving
+
+When content is fully superseded or the domain scope changes:
+1. Create `_archive/` directory if it doesn't exist
+2. Move the page to `_archive/` with its original path (e.g., `_archive/entities/old-page.md`)
+3. Remove from `index.md`
+4. Update any pages that linked to it — replace wikilink with plain text + "(archived)"
+5. Log the archive action
+
+### Obsidian Integration
+
+The wiki directory works as an Obsidian vault out of the box:
+- `[[wikilinks]]` render as clickable links
+- Graph View visualizes the knowledge network
+- YAML frontmatter powers Dataview queries
+- The `raw/assets/` folder holds images referenced via `![[image.png]]`
+
+For best results:
+- Set Obsidian's attachment folder to `raw/assets/`
+- Enable "Wikilinks" in Obsidian settings (usually on by default)
+- Install Dataview plugin for queries like `TABLE tags FROM "entities" WHERE contains(tags, "company")`
+
+If using the Obsidian skill alongside this one, set `OBSIDIAN_VAULT_PATH` to the
+same directory as the wiki path.
+
+### Obsidian Headless (servers and headless machines)
+
+On machines without a display, use `obsidian-headless` instead of the desktop app.
+It syncs vaults via Obsidian Sync without a GUI — perfect for agents running on
+servers that write to the wiki while Obsidian desktop reads it on another device.
+
+**Setup:**
+```bash
+# Requires Node.js 22+
+npm install -g obsidian-headless
+
+# Login (requires Obsidian account with Sync subscription)
+ob login --email <email> --password '<password>'
+
+# Create a remote vault for the wiki
+ob sync-create-remote --name "LLM Wiki"
+
+# Connect the wiki directory to the vault
+cd ~/wiki
+ob sync-setup --vault "<vault-id>"
+
+# Initial sync
+ob sync
+
+# Continuous sync (foreground — use systemd for background)
+ob sync --continuous
+```
+
+**Continuous background sync via systemd:**
+```ini
+# ~/.config/systemd/user/obsidian-wiki-sync.service
+[Unit]
+Description=Obsidian LLM Wiki Sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/path/to/ob sync --continuous
+WorkingDirectory=%h/wiki
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now obsidian-wiki-sync
+# Enable linger so sync survives logout:
+sudo loginctl enable-linger $USER
+```
+
+This lets the agent write to `~/wiki` on a server while you browse the same
+vault in Obsidian on your laptop/phone — changes appear within seconds.
+
+## Map of Content (MOC) Pages
+
+When a thematic cluster of 5+ concept pages emerges around a central idea, create a **Map of Content (MOC)** page — a navigational hub that groups related pages by sub-theme with one-line summaries and cross-links.
+
+**When to create a MOC:**
+- User asks to "survey," "map," or "investigate" a topic and you find 5+ related pages
+- A concept has grown tendrils across entities/, concepts/, comparisons/ — the MOC unifies them
+- After a deep investigation session, as a checkpoint artifact
+
+**MOC page conventions:**
+- File: `concepts/<topic>-moc.md`
+- Type: `concept`
+- Tags: include `knowledge-management` alongside domain tags
+- Structure: numbered thematic clusters, each with a table of pages + summaries
+- Link direction: MOC → all related pages (outbound). Related pages do NOT need to link back to MOC (avoids circular clutter). Exception: the hub concept page should link to MOC in a `## Navigation` section.
+- The MOC's `related:` field lists all pages in the cluster for programmatic discovery
+
+**MOC vs hub concept page:** A hub concept page (e.g., `representation-collapse.md`) is the *central argument*. A MOC (e.g., `representation-collapse-moc.md`) is the *navigational map*. Keep them separate — the hub makes the claim, the MOC organizes the territory.
+
+## Hub Concept Naming
+
+**Name the phenomenon, not the person or theory.** When creating a concept page that synthesizes an existing framework (e.g., Baudrillard's Simulacra), the title should describe the *actual phenomenon* for discoverability by people unfamiliar with the source thinker.
+
+- ✅ `Representation Collapse — When Models, Maps, and Proxies Replace Reality`
+- ❌ `Baudrillard and AI` (opaque to anyone who doesn't know Baudrillard)
+
+The person/theory name becomes an **alias** in frontmatter for backward compatibility and search. This ensures the concept is discoverable by describing *what happens*, not *who wrote about it*.
+
+## JP→EN Translation Sweeps (cron pattern)
+
+When running a "translate remaining JP files" batch over the wiki:
+
+- **Bodies vs. frontmatter are separate targets.** A body-only scan may report 0 remaining while translatable Japanese still lives in YAML frontmatter (source quotes, `source_messages`, `notes`, page `title`, non-native-script `aliases`). Run BOTH scans: total-file JP count AND body-only JP count; the gap between them is the frontmatter work.
+- **Preserve genuine multilingual aliases.** Native-script names kept for search/discoverability (`通义千问` for Qwen, `腾讯` for Tencent, `姚顺雨` for Shunyu Yao) should NOT be "translated" — they are backward-compat aliases. Only translate JP strings that are prose (quotes, notes, titles, descriptive aliases like `セッション可搬性` when an English alias already exists).
+- **When bodies are clean and only intentional aliases remain**, the sweep has reached its natural end. Report this clearly and suggest disabling/retargeting the cron job rather than manufacturing work.
+- **Exclusions for scans:** skip `raw/`, `_archive/`, `.git`, and fenced code blocks; parse frontmatter by matching the FIRST `---` at line 0 (not "any two `---` lines") or false positives appear.
+- **Intentional body JP is not backlog.** Append-only `log.md` entries quoting Japanese titles/proper names, and Japanese person names used for disambiguation on quarantine/verification pages, are content — not untranslated prose. Classify residual body-JP files by inspection before counting them as remaining work; report them separately from "translatable remaining."
+- **Sweep-end procedure:** log the natural-end conclusion in `log.md` (this bumps log JP char count slightly — a pre-commit JP warning about this is expected, not an error), commit, push, and explicitly recommend disabling/retargeting the sweep cron in the report.
+- **Reusable dual scan:** `references/jp-sweep-scan-script.py` implements the body-vs-frontmatter scan correctly (frontmatter anchored at line 0, skips raw/_archive/.git). Run via terminal with `python3 <path>` rather than hand-rolling the regex each sweep.
+- **Watch for stray uncommitted work from other pipelines** in the working tree (e.g., concept pages from active-crawl left unstaged). Translation crons committing only their own files avoid entangling other jobs' WIP; if you do commit strays, fix tag-taxonomy violations surfaced by the pre-commit hook (common: singular `ai-agent` → canonical `ai-agents`) rather than using `--no-verify`.
+
+## Wikilink lint before finishing any ingest (mandatory gate)
+
+A freshly-written page is a link-failure magnet: you guess target slugs (`[[context-rot]]`,
+`[[agent-security]]`, `[[apollo-research]]`) that don't exist, and you write **bare slugs**
+(`[[transluce]]`) while this wiki's convention is **path-qualified** links
+(`[[entities/transluce]]`, `[[concepts/prompt-injection]]`). Both silently degrade the graph.
+
+Before you commit, run a link check across exactly the files you touched:
+
+```python
+# /tmp/linklint.py — verify every [[wikilink]] in your new/edited pages resolves
+import os, re
+root = os.path.expanduser('~/wiki')
+pages = set()
+for sub in ('entities','concepts','comparisons','queries'):
+    for dp,_,fs in os.walk(os.path.join(root,sub)):
+        for f in fs:
+            if f.endswith('.md'):
+                pages.add(os.path.relpath(os.path.join(dp,f),root)[:-3])
+pset = set(pages)
+for mf in MY_FILES:                       # list the pages you created/edited
+    for m in re.findall(r'\[\[([^\]|#]+)', open(os.path.join(root,mf)).read()):
+        m = m.strip()[:-3] if m.strip().endswith('.md') else m.strip()
+        if m not in pset:
+            print('BROKEN', mf, '->', m)
+```
+
+- Cron sessions BLOCK `execute_code` (approvals) — write the script to `/tmp` and run it via
+  terminal `python3 /tmp/linklint.py`, not `execute_code`.
+- When a lint reports a broken target, **find the real slug first** (`search_files "*.md"
+  target=files` for the concept) — many topics live in nested subdirs
+  (`concepts/harness-engineering/context-engineering.md`, not `concepts/context-engineering.md`).
+  Don't invent a plausible path.
+- Also lint the `related:` frontmatter field — it references `.md` paths that must exist too,
+  and it's easy to list a page you assumed existed (this session cut a nonexistent
+  `entities/apollo-research.md` from a new page's `related:`).
+
+## Weekly graph analysis: persist a state snapshot for true set-deltas
+
+Save a JSON snapshot each weekly run to `wiki/_meta/graph-analysis-state.json` containing
+`{orphans, broken(targets→source-list), nlines, jitmap(size:mtime:basename dedup key), total, dup groups}`.
+Next week diff the SETS (which orphans/dups are new/resolved), not just counts — counts alone
+let unresolved items hide (this wiki carried the same 8 duplicate groups and the same
+188-ref `concepts/context-engineering` dir-hub for 4 consecutive weeks).
+
+Duplicate classification that avoids false positives (verified 2026-09-25):
+- **Group by basename after resolving each page path** — a naive `os.path.basename` dict-overwrite
+  silently drops collisions and reports single paths as "dup groups".
+- Skip groups where any member is a redirect (`^redirect` in first 400 chars) or <25 lines.
+- Separate three classes: (A) true dups needing merge, (B) flat-vs-subdir collisions from dir
+  reorganization (~22 were 25L stubs → pure redirect candidates), (C) by-design pairs
+  (entity+concept, concept+comparison, dir `index.md` hubs) — never count C as debt.
+- `index.md`/`_index.md` hub files show up as dup basenames across dirs — always exclude.
+
+Other confirmed gotchas: report broken refs by resolved target (grouped count) not per-file to
+match prior baselines; `related:` frontmatter targets must be linted too (~74 broken); missing-
+frontmatter scans must accept BOTH `sources: [a,b]` inline and `sources:\n  - a` block styles or
+you'll falsely report thousands of violations; a stale-count spike usually means a bulk-ingest
+cohort crossed the 90d line — recommend a per-type threshold policy (entities 180d) instead of
+batch touching. Stock `~/.hermes/scripts/wiki_graph_analysis_verified.py` under-reports dir-hub targets;
+full classification script pattern: `/tmp/wga/linklint.py` this session (path-missing vs
+raw/transcripts-ref vs bare-missing vs related-field).
+
+## Provenance bar on patch-appended claims (re-read the raw you just saved)
+
+When you `patch` an EXISTING page to add a claim sourced from a raw file you just ingested,
+verify the claim is actually in the saved raw body before committing — especially under a
+compaction or from memory. This session wrote "launched two prototype satellites in Nov 2025
+with Blue Origin" into `space-gpus.md` from a half-remembered detail; the raw said
+*"learning mission with Planet to launch two prototype satellites **by early 2027**"* (not yet
+launched, no Blue Origin). Re-read the raw article section you cite and match dates, partners,
+and status verbs (announced vs launched vs planned). Fix the patch, don't keep the flourish.
+
+## Index counts drift because sibling crons create pages mid-session
+
+In a shared `~/ai-topics` tree, other ingestion crons are adding pages while you work, so
+`index.md`'s `## Entities (N pages)` headers and `Total pages:` are almost never equal to your
+own edits. Recompute the ACTUAL counts from the filesystem (walk `entities/`, `concepts/`, …
+and count `.md`) and write those into the section headers + total, rather than incrementing the
+header by "6 new pages". The section header is a filesystem truth, not a running tally —
+reconciling it to `find`-count each ingest keeps the index honest even as siblings churn.
+
+## Tag mapping quick-ref additions seen this session
+
+`ai-alignment`→`alignment` (+ `ai-safety`); `context-rot` is NOT a taxonomy tag (use
+`context-engineering`; the page concept lives under `concepts/harness-engineering/context-engineering`);
+`surveillance`/`censorship` are valid; `agent-memory`/`enterprise-ai`/`knowledge-management`/
+`information-retrieval`/`rag`/`retrieval` are all valid for enterprise-RAG pages.
+
+## Pitfalls
+
+- **Never modify files in `raw/`** — sources are immutable. Corrections go in wiki pages.
+- **Search scope for wiki content** — When investigating "wiki content on X," don't limit search to `wiki/` subdirectories. The ai-topics repo also has `blog/` (published articles), `inbox/`, `transcripts/`, and top-level directories that contain relevant material. A file reported as "missing" may simply be outside `wiki/`. Always check `git log --all --oneline -- "path"` before reporting a file as deleted.
+- **Always orient first** — read SCHEMA + index + recent log before any operation in a new session.
+  Skipping this causes duplicates and missed cross-references.
+- **Always update index.md and log.md** — skipping this makes the wiki degrade. These are the
+  navigational backbone.
+- **Cron sessions may block execute_code** — if `approvals.cron_mode` is unset, `execute_code`
+  is refused in unattended cron jobs. Run helper Python via terminal heredoc instead
+  (`cat > /tmp/x.py << 'EOF' ... EOF && python3 /tmp/x.py`). The `patch` tool still works.
+- **Don't create pages for passing mentions** — follow the Page Thresholds in SCHEMA.md. A name
+  appearing once in a footnote doesn't warrant an entity page.
+- **Don't create pages without cross-references** — isolated pages are invisible. Every page must
+  link to at least 2 other pages.
+- **Frontmatter is required** — it enables search, filtering, and staleness detection.
+- **Tags must come from the taxonomy** — freeform tags decay into noise. Add new tags to SCHEMA.md
+  first, then use them.
+- **Keep pages scannable** — a wiki page should be readable in 30 seconds. Split pages over
+  200 lines. Move detailed analysis to dedicated deep-dive pages.
+- **Ask before mass-updating** — if an ingest would touch 10+ existing pages, confirm
+  the scope with the user first.
+- **Rotate the log** — when log.md exceeds 500 entries, rename it `log-YYYY.md` and start fresh.
+  The agent should check log size during lint.
+
+## arXiv ingestion (active-crawl / scheduled research)
+
+When ingesting recent arXiv papers (the `active-crawl` job and any "find arXiv sources" task):
+
+- **Prefer the arXiv Atom API over scraping `/html/`.** `https://arxiv.org/html/<id>v<n>` 404s for
+  very recent papers and is unreliable to fetch. Use the stable Atom endpoint instead — it returns
+  authors, abstract, dates, and the **correct arXiv ID**:
+  `curl 'http://export.arxiv.org/api/query?id_list=<id1>,<id2>'` (parse the Atom XML; namespace
+  `http://www.w3.org/2005/Atom`). Save the abstract as the raw source with `source_url` + `sha256`.
+- **Verify the arXiv ID, never trust notes-from-memory across a compaction.** A transcript ID can be
+  a typo. Confirm by title search:
+  `curl 'http://export.arxiv.org/api/query?search_query=all:%22<exact title phrase>%22'`. This
+  session corrected `2609.21208` → `2609.20812` only because the ID was re-checked, not assumed.
+- **Apply a provenance bar before creating a page.** Drop scanner-blocked `.dev` sites, HN memes /
+  stunt posts, and anything without a durable original source. Log dropped candidates in `log.md`
+  rather than fabricating a page from a thin source.
+
+## Committing wiki changes in a shared working tree (cron with concurrent sibling pipelines)
+
+Multiple ingestion crons can leave their own WIP staged/modified in `~/ai-topics` at the same time.
+
+- **Commit only your own files** by explicit path after `git reset -q` (the working tree may already
+  have other jobs' `git add` output staged — don't assume `git add wiki/` only captures your work).
+- **Push cleanly past sibling WIP:** the pre-commit hook validates tags, so if a *sibling's*
+  index/log edits trip it while you commit, `git stash push -u -m "<desc>"`, then
+  `git pull --rebase && git push`, then `git stash pop`. `git pull --rebase` fails outright on any
+  unstaged changes ("cannot pull with rebase: You have unstaged changes") — the stash is the fix,
+  not `--no-verify`.
+- **A sibling may have modified the file you're about to patch** (write_file/patch surface a
+  "modified since you last read it" warning). Re-read before the final index/log write if warned.
+- **Pre-dry-run the hook instead of discovering it on commit:** the ai-topics hook runs from
+  `core.hooksPath = .githooks` (NOT `.git/hooks`). After `git add` your files but BEFORE the
+  real `git commit`, run `.githooks/pre-commit` to surface tag-taxonomy or shrink violations
+  early. Fix the offending frontmatter, re-`git add`, then commit. This avoids a blocked commit
+  mid-push and the stash dance below.
+- **Stash round-trip is a 3-step discipline, not one:** if you `git stash push -u` to clear
+  sibling WIP, you MUST `git stash pop` at the very end to restore it (verify with `git stash
+  list` — it should be empty). A cron that stashes to push cleanly but never pops silently
+  discards another pipeline's uncommitted work.
+
+## Tag taxonomy violations (wiki pre-commit hook)
+
+The ai-topics wiki pre-commit hook blocks commits whose page `tags:` aren't in `SCHEMA.md`'s
+taxonomy. Don't `--no-verify` — map to the canonical singular/canonical form. Confirmed across
+sessions: `harness`→`agent-harness`, `agent-oversight`→`agent-observability`,
+`open-weights`→`open-weight`, `ai-agent`→`ai-agents`, `data`→`datasets` (or `training` /
+`synthetic-data` / `corpus` per the claim). Plain `data` is NEVER a valid tag — it only appears
+in SCHEMA.md as prose and inside `open-data`/`private-data`. Grep `SCHEMA.md` for a tag before
+assuming a plural, singular, or generic-word variant exists; several canonical tags are
+counterintuitive (`open-weight` not `open-weights`, `datasets` not `data`). When a tag-word is
+ambiguous, grep with word boundaries (`\bword\b`) to distinguish a real taxonomy entry from
+incidental prose or a compound (`open-data`).
+
+## Never overwrite a rich page with a skeleton (hard pre-commit gate)
+
+Per the ai-topics `AGENTS.md`: any existing `entities/` / `concepts/` page over ~40 lines MUST be
+edited with `read_file` + `patch`, never `write_file`. The pre-commit hook detects and blocks a
+>50% shrink, so a skeleton overwrite fails the commit *and* risks destroying accumulated knowledge.
+When enriching, patch-append sections and bump `updated` rather than rewriting the body.
+
+## Working directory
+
+The runner sets the working directory to ~/ai-topics and supplies the portable contract. Use ~/wiki for all wiki operations.
+
+## Related Tools
+
+[llm-wiki-compiler](https://github.com/atomicmemory/llm-wiki-compiler) is a Node.js CLI that
+compiles sources into a concept wiki with the same Karpathy inspiration. It's Obsidian-compatible,
+so users who want a scheduled/CLI-driven compile pipeline can point it at the same vault this
+skill maintains. Trade-offs: it owns page generation (replaces the agent's judgment on page
+creation) and is tuned for small corpora. Use this skill when you want agent-in-the-loop curation;
+use llmwiki when you want batch compile of a source directory.

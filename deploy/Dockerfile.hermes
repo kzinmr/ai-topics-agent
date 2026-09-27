@@ -1,0 +1,21 @@
+# Optional Hermes runtime; the independent runner remains the only scheduler.
+FROM golang:1.26.2-bookworm@sha256:47ce5636e9936b2c5cbf708925578ef386b4f8872aec74a67bd13a627d242b19 AS tools
+RUN CGO_ENABLED=0 go install github.com/Hyaxia/blogwatcher/cmd/blogwatcher@v0.0.2 \
+ && CGO_ENABLED=0 go install github.com/xdevplatform/xurl@v1.1.0
+FROM nousresearch/hermes-agent@sha256:f08555b139417068a825da518b5624dc47e12e1a9fced68e326abb74bc14759a
+USER root
+COPY --from=tools /go/bin/blogwatcher /usr/local/bin/blogwatcher-cli
+COPY --from=tools /go/bin/xurl /usr/local/bin/xurl
+WORKDIR /app
+COPY . /app
+RUN uv venv --python /opt/hermes/.venv/bin/python /app/.venv \
+ && uv pip install --python /app/.venv/bin/python --require-hashes -r requirements.lock \
+ && uv pip install --python /app/.venv/bin/python --no-deps .
+ENV AI_TOPICS_AGENT_SOURCE=/app AI_TOPICS_PYTHON=/app/.venv/bin/python \
+    HERMES_PROFILE_ROOT=/opt/data HOME=/opt/data HERMES_HOME=/opt/data/.hermes \
+    HERMES_SUBPROCESS_HOME=/opt/data \
+    BLOGWATCHER_BIN=/usr/local/bin/blogwatcher-cli XURL_PATH=/usr/local/bin/xurl \
+    PATH=/app/bin:/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin
+USER hermes
+ENTRYPOINT ["/app/bin/ai-topics-agent"]
+CMD ["serve"]

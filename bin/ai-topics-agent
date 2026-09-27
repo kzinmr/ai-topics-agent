@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+agent_repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export AI_TOPICS_AGENT_SOURCE="$agent_repo"
+export PYTHONPATH="$agent_repo/src${PYTHONPATH:+:$PYTHONPATH}"
+exec "${AI_TOPICS_PYTHON:-python3}" -m ai_topics_agent "$@"
